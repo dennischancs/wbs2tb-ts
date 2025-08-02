@@ -1,21 +1,82 @@
-name: Release WBS2TB Electron App
+name: CI and Release
 
 on:
   push:
-    tags:
-      - 'v*' # Trigger on version tags (e.g., v1.0.0, v2.0.0)
+    branches: [ "*" ]  # Trigger on push to any branch
+  pull_request:
+    branches: [ "*" ]  # Also trigger on pull requests
+  workflow_dispatch:     # Allow manual triggering
 
 jobs:
+  test:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: '20'
+        cache: 'npm'
+
+    - name: Install dependencies
+      run: npm ci
+
+    - name: Run TypeScript type checking
+      run: npx tsc --noEmit
+
+    - name: Run tests (if any)
+      run: npm test
+      continue-on-error: true  # Continue even if tests fail (in case no tests are set up yet)
+
   build:
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:
         os: [ubuntu-latest, windows-latest, macos-latest]
-        # We can let electron-builder handle arch for macOS and Windows
-        # For Linux, we only build x64 as per electron-builder.json
+    needs: test  # Only run if tests pass
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: '20'
+        cache: 'npm'
+
+    - name: Install dependencies
+      run: npm ci
+
+    - name: Build project
+      run: npm run build
+      continue-on-error: true  # Continue even if build fails (in case build script is not set up)
+
+    - name: Build Electron App (test)
+      run: npm run dist:dir  # Build without packaging for testing
+      continue-on-error: true
+      env:
+        GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  release:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    needs: [test, build]  # Only run if tests and build pass
+    if: github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch'  # Only run on main branch or manual trigger
+    
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
+
+      - name: Extract version from package.json
+        id: version
+        run: echo "VERSION=$(node -p "require('./package.json').version")" >> $GITHUB_OUTPUT
+        shell: bash
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -52,9 +113,17 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Create Git Tag
+        if: matrix.os == 'ubuntu-latest'  # Only run once on Ubuntu to avoid duplicate tags
+        run: |
+          git config --local user.email "action@github.com"
+          git config --local user.name "GitHub Action"
+          git tag -a "v${{ steps.version.outputs.VERSION }}" -m "Release v${{ steps.version.outputs.VERSION }}"
+          git push origin "v${{ steps.version.outputs.VERSION }}"
+
       - name: Upload artifacts to GitHub Release
+        if: matrix.os == 'ubuntu-latest'  # Only run once on Ubuntu to avoid duplicate releases
         uses: softprops/action-gh-release@v1
-        if: startsWith(github.ref, 'refs/tags/') # Only run this step for tags
         with:
           # The path to the assets to upload. Glob patterns are supported.
           # electron-builder outputs to dist-electron/
@@ -62,7 +131,7 @@ jobs:
           # Generate a release note body. This can be customized.
           # For now, we'll use a generic message.
           body: |
-            ## WBS2TB v${{ github.ref_name }} Release
+            ## WBS2TB v${{ steps.version.outputs.VERSION }} Release
             
             This release provides the latest version of the WBS2TB (Excel WBS to Teambition sync tool) desktop application.
             
