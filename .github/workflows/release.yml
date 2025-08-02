@@ -3,6 +3,8 @@ name: CI and Release
 on:
   push:
     branches: [ "*" ]  # Trigger on push to any branch
+    tags:
+      - 'v*'  # Trigger on version tags (e.g., v0.0.1, v1.2.3)
   pull_request:
     branches: [ "*" ]  # Also trigger on pull requests
   workflow_dispatch:     # Allow manual triggering
@@ -94,7 +96,7 @@ jobs:
           - os: macos-latest
             arch: arm64
     needs: [test, build]  # Only run if tests and build pass
-    if: github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch'  # Only run on main branch or manual trigger
+    if: startsWith(github.ref, 'refs/tags/v')  # Only run when a version tag is pushed
     
     steps:
       - name: Checkout code
@@ -103,6 +105,11 @@ jobs:
       - name: Extract version from package.json
         id: version
         run: echo "VERSION=$(node -p "require('./package.json').version")" >> $GITHUB_OUTPUT
+        shell: bash
+
+      - name: Extract version from tag
+        id: tag_version
+        run: echo "TAG_VERSION=${GITHUB_REF#refs/tags/v}" >> $GITHUB_OUTPUT
         shell: bash
 
       - name: Setup Node.js
@@ -140,15 +147,6 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Create Git Tag
-        if: matrix.os == 'ubuntu-latest'  # Only run once on Ubuntu to avoid duplicate tags
-        run: |
-          git config --local user.email "action@github.com"
-          git config --local user.name "GitHub Action"
-          git tag -a "v${{ steps.version.outputs.VERSION }}" -m "Release v${{ steps.version.outputs.VERSION }}"
-          git push origin "v${{ steps.version.outputs.VERSION }}"
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Upload artifacts to GitHub Release
         if: matrix.os == 'ubuntu-latest'  # Only run once on Ubuntu to avoid duplicate releases
@@ -160,7 +158,7 @@ jobs:
           # Generate a release note body. This can be customized.
           # For now, we'll use a generic message.
           body: |
-            ## WBS2TB v${{ steps.version.outputs.VERSION }} Release
+            ## WBS2TB ${{ steps.tag_version.outputs.TAG_VERSION }} Release
             
             This release provides the latest version of the WBS2TB (Excel WBS to Teambition sync tool) desktop application.
             
