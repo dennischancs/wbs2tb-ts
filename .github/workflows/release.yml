@@ -7,6 +7,9 @@ on:
     branches: [ "*" ]  # Also trigger on pull requests
   workflow_dispatch:     # Allow manual triggering
 
+permissions:
+  contents: write      # Required to push tags and create releases
+
 jobs:
   test:
     runs-on: ubuntu-latest
@@ -35,7 +38,19 @@ jobs:
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:
-        os: [ubuntu-latest, windows-latest, macos-latest]
+        include:
+          - os: ubuntu-latest
+            arch: x64
+          - os: ubuntu-latest
+            arch: arm64
+          - os: windows-latest
+            arch: x64
+          - os: windows-latest
+            arch: arm64
+          - os: macos-latest
+            arch: x64
+          - os: macos-latest
+            arch: arm64
     needs: test  # Only run if tests pass
     
     steps:
@@ -65,7 +80,19 @@ jobs:
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:
-        os: [ubuntu-latest, windows-latest, macos-latest]
+        include:
+          - os: ubuntu-latest
+            arch: x64
+          - os: ubuntu-latest
+            arch: arm64
+          - os: windows-latest
+            arch: x64
+          - os: windows-latest
+            arch: arm64
+          - os: macos-latest
+            arch: x64
+          - os: macos-latest
+            arch: arm64
     needs: [test, build]  # Only run if tests and build pass
     if: github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch'  # Only run on main branch or manual trigger
     
@@ -97,21 +124,31 @@ jobs:
 
       - name: Build Electron App (Linux)
         if: matrix.os == 'ubuntu-latest'
-        run: npm run dist
+        run: npm run dist -- --linux --${{ matrix.arch }}
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Build Electron App (Windows)
         if: matrix.os == 'windows-latest'
-        run: npm run dist
+        run: npm run dist -- --win --${{ matrix.arch }}
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Build Electron App (macOS)
         if: matrix.os == 'macos-latest'
-        run: npm run dist
+        run: npm run dist -- --mac --${{ matrix.arch }}
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Create Git Tag
+        if: matrix.os == 'ubuntu-latest'  # Only run once on Ubuntu to avoid duplicate tags
+        run: |
+          git config --local user.email "action@github.com"
+          git config --local user.name "GitHub Action"
+          git tag -a "v${{ steps.version.outputs.VERSION }}" -m "Release v${{ steps.version.outputs.VERSION }}"
+          git push origin "v${{ steps.version.outputs.VERSION }}"
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Upload artifacts to GitHub Release
         if: matrix.os == 'ubuntu-latest'  # Only run once on Ubuntu to avoid duplicate releases
@@ -144,6 +181,7 @@ jobs:
             
             **Linux:**
             *   `WBS2TB-x86_64.AppImage`: For 64-bit Linux distributions. Make the file executable (`chmod +x WBS2TB-x86_64.AppImage`) and run it.
+            *   `WBS2TB-arm64.AppImage`: For ARM64 Linux distributions. Make the file executable (`chmod +x WBS2TB-arm64.AppImage`) and run it.
             
             ### Support
             For issues and questions, please visit our [GitHub Issues page](${{ github.server_url }}/${{ github.repository }}/issues).
