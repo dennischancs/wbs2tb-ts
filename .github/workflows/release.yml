@@ -1,188 +1,152 @@
-name: CI and Release
+name: Cross-platform Build and Release
 
 on:
   push:
-    branches: [ "*" ]  # Trigger on push to any branch
-    tags:
-      - 'v*'  # Trigger on version tags (e.g., v0.0.1, v1.2.3)
+    branches: [ "main" ]
   pull_request:
-    branches: [ "*" ]  # Also trigger on pull requests
-  workflow_dispatch:     # Allow manual triggering
-
-permissions:
-  contents: write      # Required to push tags and create releases
+    branches: [ "main" ]
 
 jobs:
-  test:
-    runs-on: ubuntu-latest
-    
-    steps:
-    - name: Checkout code
-      uses: actions/checkout@v4
-
-    - name: Setup Node.js
-      uses: actions/setup-node@v4
-      with:
-        node-version: '20'
-        cache: 'npm'
-
-    - name: Install dependencies
-      run: npm ci
-
-    - name: Run TypeScript type checking
-      run: npx tsc --noEmit
-
-    - name: Run tests (if any)
-      run: npm test
-      continue-on-error: true  # Continue even if tests fail (in case no tests are set up yet)
-
   build:
+    name: Build for ${{ matrix.platform }} - ${{ matrix.arch }}
     runs-on: ${{ matrix.os }}
     strategy:
+      fail-fast: false
       matrix:
         include:
-          - os: ubuntu-latest
-            arch: x64
-          - os: ubuntu-latest
-            arch: arm64
+          # Windows
           - os: windows-latest
+            platform: windows
             arch: x64
-          - os: windows-latest
-            arch: arm64
+          # macOS
           - os: macos-latest
+            platform: macos
             arch: x64
           - os: macos-latest
+            platform: macos
             arch: arm64
-    needs: test  # Only run if tests pass
-    
-    steps:
-    - name: Checkout code
-      uses: actions/checkout@v4
-
-    - name: Setup Node.js
-      uses: actions/setup-node@v4
-      with:
-        node-version: '20'
-        cache: 'npm'
-
-    - name: Install dependencies
-      run: npm ci
-
-    - name: Build project
-      run: npm run build
-      continue-on-error: true  # Continue even if build fails (in case build script is not set up)
-
-    - name: Build Electron App (test)
-      run: npm run dist:dir  # Build without packaging for testing
-      continue-on-error: true
-      env:
-        GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-  release:
-    runs-on: ${{ matrix.os }}
-    strategy:
-      matrix:
-        include:
+          # Linux
           - os: ubuntu-latest
+            platform: linux
             arch: x64
           - os: ubuntu-latest
+            platform: linux
             arch: arm64
-          - os: windows-latest
-            arch: x64
-          - os: windows-latest
-            arch: arm64
-          - os: macos-latest
-            arch: x64
-          - os: macos-latest
-            arch: arm64
-    needs: [test, build]  # Only run if tests and build pass
-    if: startsWith(github.ref, 'refs/tags/v')  # Only run when a version tag is pushed
-    
+
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Extract version from package.json
-        id: version
-        run: echo "VERSION=$(node -p "require('./package.json').version")" >> $GITHUB_OUTPUT
-        shell: bash
-
-      - name: Extract version from tag
-        id: tag_version
-        run: echo "TAG_VERSION=${GITHUB_REF#refs/tags/v}" >> $GITHUB_OUTPUT
-        shell: bash
-
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '20' # As specified in package.json engines
+          node-version: 'lts/*'
           cache: 'npm'
-
-      - name: Generate package-lock.json if it doesn't exist
-        run: |
-          if [ ! -f package-lock.json ]; then
-            echo "package-lock.json not found. Generating..."
-            npm install
-          fi
-        shell: bash
 
       - name: Install dependencies
         run: npm ci
 
-      - name: Build Electron App (Linux)
-        if: matrix.os == 'ubuntu-latest'
-        run: npm run dist -- --linux --${{ matrix.arch }}
+      - name: Build application
+        run: npm run build
+
+      - name: Package application (Windows)
+        if: matrix.platform == 'windows'
+        run: npm run package:win
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # For Windows signing (if configured in electron-builder.json)
+          # CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}
+          # WINDOWS_SIGNING_HASH: ${{ secrets.WINDOWS_SIGNING_HASH }} # Or other relevant secret
+          CSC_IDENTITY_AUTO_DISCOVERY: true # Attempts to find a signing certificate
 
-      - name: Build Electron App (Windows)
-        if: matrix.os == 'windows-latest'
-        run: npm run dist -- --win --${{ matrix.arch }}
+      - name: Package application (macOS)
+        if: matrix.platform == 'macos'
+        run: npm run package:mac
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # For notarization on macOS (if configured in electron-builder.json)
+          # APPLE_ID: ${{ secrets.APPLE_ID }}
+          # APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+          # APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          CSC_IDENTITY_AUTO_DISCOVERY: true # Attempts to find a signing certificate
 
-      - name: Build Electron App (macOS)
-        if: matrix.os == 'macos-latest'
-        run: npm run dist -- --mac --${{ matrix.arch }}
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Package application (Linux)
+        if: matrix.platform == 'linux'
+        run: npm run package:linux
 
-
-      - name: Upload artifacts to GitHub Release
-        if: matrix.os == 'ubuntu-latest'  # Only run once on Ubuntu to avoid duplicate releases
-        uses: softprops/action-gh-release@v1
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
         with:
-          # The path to the assets to upload. Glob patterns are supported.
-          # electron-builder outputs to dist-electron/
-          files: dist-electron/*
-          # Generate a release note body. This can be customized.
-          # For now, we'll use a generic message.
+          name: ${{ matrix.platform }}-${{ matrix.arch }}-dist
+          path: |
+            release/
+            !release/builder-debug.yml
+            !release/builder-effective-config.yaml
+
+  release:
+    name: Create Release
+    needs: build
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: all-artifacts/
+
+      - name: Flatten artifacts
+        run: |
+          mkdir -p release-files
+          find all-artifacts/ -type f \( -name "*.dmg" -o -name "*.exe" -o -name "*.zip" -o -name "*.AppImage" -o -name "*.snap" -o -name "*.deb" -o -name "*.rpm" -o -name "*.blockmap" -o -name "*.yml" -o -name "*.yaml" \) -exec cp {} release-files/ \;
+          ls -la release-files/
+
+      - name: Generate tag name and version
+        id: tag_version
+        run: |
+          VERSION=$(node -p "require('./package.json').version")
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "tag_name=v$VERSION" >> $GITHUB_OUTPUT
+          echo "VERSION=$VERSION" >> $GITHUB_ENV
+
+      - name: Check for existing tag
+        id: check_tag
+        run: |
+          if git ls-remote --tags origin refs/tags/${{ steps.tag_version.outputs.tag_name }}; then
+            echo "Tag ${{ steps.tag_version.outputs.tag_name }} already exists. Skipping release creation."
+            echo "should_create_release=false" >> $GITHUB_OUTPUT
+          else
+            echo "Tag ${{ steps.tag_version.outputs.tag_name }} does not exist. Proceeding with release."
+            echo "should_create_release=true" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Create Release
+        if: steps.check_tag.outputs.should_create_release == 'true'
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            release-files/*
+          tag_name: ${{ steps.tag_version.outputs.tag_name }}
+          name: "Release v${{ env.VERSION }}"
           body: |
-            ## WBS2TB ${{ steps.tag_version.outputs.TAG_VERSION }} Release
-            
-            This release provides the latest version of the WBS2TB (Excel WBS to Teambition sync tool) desktop application.
-            
-            ### What's new?
-            * (Placeholder for release notes - please update this section with actual changes)
-            
-            ### Installation Instructions
-            
-            Please choose the installer corresponding to your operating system and CPU architecture.
-            
-            **Windows:**
-            *   `WBS2TB Setup x64.exe`: For 64-bit Windows systems.
-            *   `WBS2TB Setup arm64.exe`: For Windows on ARM (e.g., Surface Pro X).
-            
-            **macOS:**
-            *   `WBS2TB-x64.dmg`: For Intel-based Macs.
-            *   `WBS2TB-arm64.dmg`: For Apple Silicon Macs (M1, M2, etc.).
-            
-            **Linux:**
-            *   `WBS2TB-x86_64.AppImage`: For 64-bit Linux distributions. Make the file executable (`chmod +x WBS2TB-x86_64.AppImage`) and run it.
-            *   `WBS2TB-arm64.AppImage`: For ARM64 Linux distributions. Make the file executable (`chmod +x WBS2TB-arm64.AppImage`) and run it.
-            
-            ### Support
-            For issues and questions, please visit our [GitHub Issues page](${{ github.server_url }}/${{ github.repository }}/issues).
-          prerelease: false # Set to true for pre-releases
+            ## 📦 wbs2tb-ts v${{ env.VERSION }}
+
+            This release contains pre-built binaries for:
+            - Windows (x64)
+            - macOS (Intel x64 and Apple Silicon arm64)
+            - Linux (x64 and arm64)
+
+            ### 🚀 Installation
+            1. Download the appropriate installer or package for your platform and architecture from the assets below.
+            2. For Windows and macOS, run the installer. For Linux, follow the instructions for your specific package format (e.g., make the AppImage executable and run it, or install the .deb/.rpm package).
+
+            **Commit:** ${{ github.sha }}
+            **Build Run:** #${{ github.run_number }}
+          draft: false
+          prerelease: false
+          generate_release_notes: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
