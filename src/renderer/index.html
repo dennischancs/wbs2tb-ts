@@ -1,0 +1,239 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>WBS2TB - Excel到Teambition同步工具</title>
+    <link rel="icon" type="image/png" href="../assets/icon.png">
+    <link rel="stylesheet" href="./styles.css">
+</head>
+<body>
+    <div class="container">
+        <header>
+            <nav class="main-nav">
+                <button class="nav-btn active" data-target="config-section">配置设置</button>
+                <button class="nav-btn" data-target="control-section">控制面板</button>
+                <button class="nav-btn" data-target="logs-section">操作日志</button>
+            </nav>
+        </header>
+        <button id="theme-toggle" class="btn-icon btn-float" title="切换主题">
+            <!-- Icon will be set by JavaScript -->
+        </button>
+
+        <div class="content-wrapper">
+            <section id="config-section" class="config-section active">
+                <div class="section-header">
+                    <h2>配置设置</h2>
+                </div>
+                <form id="configForm">
+                    <div class="form-group">
+                        <label for="projectUrl">项目URL:</label>
+                        <input type="url" id="projectUrl" placeholder="https://www.teambition.com/project/项目ID" required>
+                        <small>示例: https://www.teambition.com/project/1234567890abcdefghijklmn</small>
+                        <div class="invalid-feedback">请输入有效的Teambition项目URL</div>
+                    </div>
+
+                    <div class="form-group">
+                        <label for="pdt">PDT (项目负责人):</label>
+                        <input type="text" id="pdt" placeholder="项目负责人姓名">
+                    </div>
+
+                    <div class="form-group">
+                        <label for="cookies">Cookies:</label>
+                        <textarea id="cookies" placeholder="粘贴从Teambition获取的Cookies" rows="3"></textarea>
+                        <div class="cookie-controls">
+                            <small>点击"自动获取Cookies"按钮，系统将指导您完成获取过程</small>
+                            <button type="button" id="autoGetCookies" class="btn-secondary">自动获取Cookies</button>
+                        </div>
+                    </div>
+
+                    <div class="form-group">
+                        <label for="excelFile">Excel文件:</label>
+                        <input type="file" id="excelFile" accept=".xlsx,.xls" required>
+                    </div>
+
+                    <div class="form-group">
+                        <label for="sheetName">工作表名称:</label>
+                        <div class="sheet-controls-row">
+                            <select id="sheetName" disabled>
+                                <option value="">请选择工作表</option>
+                            </select>
+                            <button type="button" id="previewTableBtn" class="btn-secondary" disabled>表格预览</button>
+                            <button type="button" id="fieldMappingBtn" class="btn-secondary" disabled>同步字段映射（高级）🔒</button>
+                        </div>
+                        <small>选择Excel文件后将自动加载工作表列表</small>
+                    </div>
+
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label for="batchSize">批处理大小:</label>
+                            <input type="number" id="batchSize" min="1" max="100" value="20">
+                        </div>
+
+                        <div class="form-group">
+                            <label for="maxConcurrent">最大并发请求数:</label>
+                            <input type="number" id="maxConcurrent" min="1" max="20" value="5">
+                        </div>
+                    </div>
+
+                    <div class="form-group checkbox-group">
+                        <input type="checkbox" id="useAsync" checked>
+                        <label for="useAsync">使用异步模式</label>
+                    </div>
+
+                    <button type="button" id="saveConfig" class="btn-primary">保存配置</button>
+                </form>
+            </section>
+
+            <section id="control-section" class="control-section">
+                <div class="section-header">
+                    <h2>控制面板</h2>
+                </div>
+                <div class="controls">
+                    <button id="startSync" class="btn-primary">开始同步</button>
+                    <button id="stopSync" disabled>停止同步</button>
+                    <button id="clearLogs">清空日志</button>
+                </div>
+
+                <div class="progress-container">
+                    <div class="progress-info">
+                        <span>进度:</span>
+                        <span id="progressText">0%</span>
+                    </div>
+                    <div class="progress-bar">
+                        <div class="progress-fill" id="progressFill" style="width: 0%"></div>
+                    </div>
+                </div>
+
+                <div class="stats-container">
+                    <div class="stat">
+                        <span class="stat-label">总任务数:</span>
+                        <span class="stat-value" id="totalCount">0</span>
+                    </div>
+                    <div class="stat">
+                        <span class="stat-label">成功:</span>
+                        <span class="stat-value success" id="successCount">0</span>
+                    </div>
+                    <div class="stat">
+                        <span class="stat-label">失败:</span>
+                        <span class="stat-value error" id="failedCount">0</span>
+                    </div>
+                    <div class="stat">
+                        <span class="stat-label">跳过:</span>
+                        <span class="stat-value" id="skippedCount">0</span>
+                    </div>
+                </div>
+            </section>
+
+            <section id="logs-section" class="logs-section">
+                <div class="section-header">
+                    <h2>操作日志</h2>
+                    <div class="log-controls">
+                        <label for="logLevelFilter">等级筛选:</label>
+                        <select id="logLevelFilter">
+                            <option value="ALL">全部</option>
+                            <option value="INFO">信息</option>
+                            <option value="WARN">警告</option>
+                            <option value="ERROR">错误</option>
+                            <option value="SUCCESS">成功</option>
+                        </select>
+                    </div>
+                </div>
+                <div class="logs-container" id="logsContainer"></div>
+            </section>
+        </div>
+
+        <footer>
+            <p>&copy; 2025 WBS2TB - Excel到Teambition智能同步工具 (基于 Electron + TypeScript)</p>
+        </footer>
+    </div>
+
+    <!-- Modal for Table Preview -->
+    <div id="previewModal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <span class="close">&times;</span>
+                <h2>表格预览</h2>
+            </div>
+            <div class="modal-body">
+                <div class="table-container">
+                    <table id="previewTable">
+                        <thead id="previewTableHead"></thead>
+                        <tbody id="previewTableBody"></tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Modal for Field Mapping -->
+    <div id="fieldMappingModal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <span class="close">&times;</span>
+                <h2>同步字段映射（高级）</h2>
+            </div>
+            <div class="modal-body">
+                <p>请将Teambition任务字段与Excel表格中的列进行映射：</p>
+                <form id="fieldMappingForm">
+                    <div class="form-group">
+                        <label for="map-taskId">任务编号:</label>
+                        <select id="map-taskId" class="field-mapping-select">
+                            <option value="">--请选择列--</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label for="map-taskName">任务名称:</label>
+                        <select id="map-taskName" class="field-mapping-select">
+                            <option value="">--请选择列--</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label for="map-startDate">开始日期:</label>
+                        <select id="map-startDate" class="field-mapping-select">
+                            <option value="">--请选择列--</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label for="map-endDate">截止日期:</label>
+                        <select id="map-endDate" class="field-mapping-select">
+                            <option value="">--请选择列--</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label for="map-reminder">提醒时间:</label>
+                        <select id="map-reminder" class="field-mapping-select">
+                            <option value="">--请选择列--</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label for="map-executor">执行者:</label>
+                        <select id="map-executor" class="field-mapping-select">
+                            <option value="">--请选择列--</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label for="map-participants">参与者:</label>
+                        <select id="map-participants" class="field-mapping-select">
+                            <option value="">--请选择列--</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label for="map-plannedHours">计划工时:</label>
+                        <select id="map-plannedHours" class="field-mapping-select">
+                            <option value="">--请选择列--</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <button type="button" id="saveFieldMapping" class="btn-primary">保存映射</button>
+                        <button type="button" id="resetFieldMapping" class="btn-secondary">重置为默认</button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+
+    <!-- 应用脚本 -->
+    <script type="module" src="./uiManager.ts"></script>
+</body>
+</html>

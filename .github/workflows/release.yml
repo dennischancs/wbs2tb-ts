@@ -1,0 +1,91 @@
+name: Release WBS2TB Electron App
+
+on:
+  push:
+    tags:
+      - 'v*' # Trigger on version tags (e.g., v1.0.0, v2.0.0)
+
+jobs:
+  build:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+        # We can let electron-builder handle arch for macOS and Windows
+        # For Linux, we only build x64 as per electron-builder.json
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20' # As specified in package.json engines
+          cache: 'npm'
+
+      - name: Generate package-lock.json if it doesn't exist
+        run: |
+          if [ ! -f package-lock.json ]; then
+            echo "package-lock.json not found. Generating..."
+            npm install
+          fi
+        shell: bash
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build Electron App (Linux)
+        if: matrix.os == 'ubuntu-latest'
+        run: npm run dist
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build Electron App (Windows)
+        if: matrix.os == 'windows-latest'
+        run: npm run dist
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build Electron App (macOS)
+        if: matrix.os == 'macos-latest'
+        run: npm run dist
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Upload artifacts to GitHub Release
+        uses: softprops/action-gh-release@v1
+        if: startsWith(github.ref, 'refs/tags/') # Only run this step for tags
+        with:
+          # The path to the assets to upload. Glob patterns are supported.
+          # electron-builder outputs to dist-electron/
+          files: dist-electron/*
+          # Generate a release note body. This can be customized.
+          # For now, we'll use a generic message.
+          body: |
+            ## WBS2TB v${{ github.ref_name }} Release
+            
+            This release provides the latest version of the WBS2TB (Excel WBS to Teambition sync tool) desktop application.
+            
+            ### What's new?
+            * (Placeholder for release notes - please update this section with actual changes)
+            
+            ### Installation Instructions
+            
+            Please choose the installer corresponding to your operating system and CPU architecture.
+            
+            **Windows:**
+            *   `WBS2TB Setup x64.exe`: For 64-bit Windows systems.
+            *   `WBS2TB Setup arm64.exe`: For Windows on ARM (e.g., Surface Pro X).
+            
+            **macOS:**
+            *   `WBS2TB-x64.dmg`: For Intel-based Macs.
+            *   `WBS2TB-arm64.dmg`: For Apple Silicon Macs (M1, M2, etc.).
+            
+            **Linux:**
+            *   `WBS2TB-x86_64.AppImage`: For 64-bit Linux distributions. Make the file executable (`chmod +x WBS2TB-x86_64.AppImage`) and run it.
+            
+            ### Support
+            For issues and questions, please visit our [GitHub Issues page](${{ github.server_url }}/${{ github.repository }}/issues).
+          prerelease: false # Set to true for pre-releases
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
