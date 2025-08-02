@@ -113,14 +113,6 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Create Git Tag
-        if: matrix.os == 'ubuntu-latest'  # Only run once on Ubuntu to avoid duplicate tags
-        run: |
-          git config --local user.email "action@github.com"
-          git config --local user.name "GitHub Action"
-          git tag -a "v${{ steps.version.outputs.VERSION }}" -m "Release v${{ steps.version.outputs.VERSION }}"
-          git push origin "v${{ steps.version.outputs.VERSION }}"
-
       - name: Upload artifacts to GitHub Release
         if: matrix.os == 'ubuntu-latest'  # Only run once on Ubuntu to avoid duplicate releases
         uses: softprops/action-gh-release@v1
