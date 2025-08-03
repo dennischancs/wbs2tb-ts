@@ -105,7 +105,13 @@ jobs:
       - name: Flatten artifacts
         run: |
           mkdir -p release-files
-          find all-artifacts/ -type f \( -name "*.dmg" -o -name "*.exe" -o -name "*.zip" -o -name "*.AppImage" -o -name "*.snap" -o -name "*.deb" -o -name "*.rpm" -o -name "*.blockmap" -o -name "*.yml" -o -name "*.yaml" \) -exec cp {} release-files/ \;
+          # 只复制各操作系统和CPU架构命名的二进制应用程序文件
+          find all-artifacts/ -type f \( -name "WBS2TB-*.AppImage" -o -name "WBS2TB-*.dmg" -o -name "WBS2TB.*.exe" \) -exec cp {} release-files/ \;
+          # 排除不需要的文件
+          cd release-files
+          rm -f *.blockmap *.yml *.yaml app-update.yml elevate.exe WBS2TB.exe
+          cd ..
+          echo "Final release files:"
           ls -la release-files/
 
       - name: Generate tag name and version
