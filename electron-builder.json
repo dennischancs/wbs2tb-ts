@@ -21,8 +21,8 @@
   "win": {
     "target": [
       {
-        "target": "nsis",
-        "arch": ["x64", "arm64"]
+        "target": "portable",
+        "arch": ["x64"]
       }
     ],
     "icon": "src/assets/icon.ico"

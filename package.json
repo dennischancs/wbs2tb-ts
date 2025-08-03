@@ -1,6 +1,6 @@
 {
   "name": "wbs2tb-electron",
-  "version": "v0.0.1",
+  "version": "0.0.1",
   "description": "Excel WBS to Teambition sync tool with TypeScript and Electron",
   "main": "dist/main/main/main.js",
   "homepage": "./",
