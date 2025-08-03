@@ -339,7 +339,7 @@ ipcMain.handle('proxy-api-request', async (_, url: string, options: any = {}) =>
     const fetchOptions: RequestInit = {
       method,
       headers: {
-        'User-Agent': 'WBS2TB/2.0.0',
+        'User-Agent': 'WBS2TB/1.0.0',
         ...headers
       }
     };
