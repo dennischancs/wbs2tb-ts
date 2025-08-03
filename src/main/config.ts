@@ -39,7 +39,8 @@ export class ConfigManager {
       batchSize: 20,
       maxConcurrent: 5,
       useAsync: true,
-      pdt: ''
+      pdt: '',
+      excelFilePath: ''
     };
   }
 

@@ -64,20 +64,15 @@ export class SyncEngine {
       // 2. 从Excel读取任务数据
       this.reportProgress(10, '正在读取Excel文件...');
       log('正在读取Excel文件...');
-      // This part needs a proper way to get the File object.
-      // For now, we assume a function that can provide it.
-      // This is a placeholder and needs to be integrated with the file picker UI.
-      const excelFilePath = configManager.getConfig().pdt; // Assuming 'pdt' holds the path
+      const excelFilePath = configManager.getConfig().pdt; // 'pdt' holds the path
       if (!excelFilePath) {
         throw new Error('Excel文件路径未配置。');
       }
-      // Note: DataProcessor.readExcel expects a File object.
-      // We might need a new method in DataProcessor or a different approach
-      // to read the file from path provided by main process.
-      // For now, let's assume a hypothetical function to get the File object.
-      const excelFile = await this.getExcelFileObject(excelFilePath); // Placeholder
       const sheetName = configManager.getConfig().sheetName;
-      await this.dataProcessor.readExcel(excelFile, sheetName);
+      if (!sheetName) {
+        throw new Error('工作表名称未配置。');
+      }
+      await this.dataProcessor.readExcelFromPath(excelFilePath, sheetName);
       
       if (!this.dataProcessor.validateColumns()) {
         throw new Error(`Excel列验证失败: ${this.dataProcessor.getErrors().join(', ')}`);
@@ -252,19 +247,6 @@ export class SyncEngine {
   }
 
 
-  /**
-   * 获取Excel文件对象 (占位符)
-   * This function needs to be implemented based on how the file is selected.
-   * It might involve a file picker dialog and reading the file into a File object.
-   */
-  private async getExcelFileObject(filePath: string): Promise<File> {
-    // This is a placeholder. In a real application, you would:
-    // 1. Have the user select a file via an <input type="file"> or Electron dialog.
-    // 2. Read the file content.
-    // 3. Create a File object or pass the path/content directly to DataProcessor.
-    // For now, we'll throw an error as this needs proper implementation.
-    throw new Error("getExcelFileObject is not implemented. File handling needs to be integrated.");
-  }
 
   /**
    * 报告进度

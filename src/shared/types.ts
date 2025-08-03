@@ -31,6 +31,7 @@ export interface SyncConfig {
   maxConcurrent: number;          // 最大并发数
   useAsync: boolean;              // 是否使用异步模式
   pdt?: string;                   // 项目负责人
+  excelFilePath?: string;         // Excel文件路径
 }
 
 // 同步统计信息接口

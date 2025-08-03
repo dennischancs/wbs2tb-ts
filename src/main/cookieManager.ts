@@ -79,7 +79,7 @@ export class ElectronCookieManager {
   }
 
   /**
-   * 自动获取Cookies（打开登录窗口）
+   * 自动获取Cookies（先检查现有cookies，如果没有则打开登录窗口）
    */
   public async autoGetCookies(): Promise<{ success: boolean; cookies?: string; error?: string }> {
     if (this.isGettingCookies) {
@@ -92,7 +92,54 @@ export class ElectronCookieManager {
     this.isGettingCookies = true;
 
     try {
-      // 创建认证窗口
+      // 首先检查是否已经有有效的Cookies
+      console.log('检查现有Cookies...');
+      const existingCookies = await session.defaultSession.cookies.get({
+        domain: '.teambition.com'
+      });
+
+      // 详细打印所有cookies用于调试
+      console.log('现有Cookies数量:', existingCookies.length);
+      console.log('Cookies详情:');
+      existingCookies.forEach((cookie, index) => {
+        console.log(`  ${index + 1}. ${cookie.name} = ${cookie.value.substring(0, 50)}...`);
+      });
+
+      // 检查是否已获取到有效的认证Cookie - 放宽检测条件
+      const hasAuthCookie = existingCookies.some(cookie => {
+        const cookieName = cookie.name.toLowerCase();
+        return cookieName.includes('session') || 
+               cookieName.includes('token') ||
+               cookieName.includes('auth') ||
+               cookieName.includes('sid') ||
+               cookieName.includes('userid') ||
+               cookieName.includes('_tb_') ||
+               cookieName.includes('csrf') ||
+               cookieName.includes('_xsrf') ||
+               cookieName.length > 20; // 如果cookie名称很长，可能是认证相关的
+      });
+
+      console.log('检测到认证Cookie:', hasAuthCookie);
+      console.log('Cookie数量条件满足:', existingCookies.length > 0);
+
+      // 放宽条件：只要有任何cookies就认为可能是已登录状态
+      if (existingCookies.length > 0) {
+        const cookieString = existingCookies
+          .map(cookie => `${cookie.name}=${cookie.value}`)
+          .join('; ');
+
+        console.log('发现Cookies，直接使用，数量:', existingCookies.length);
+        this.isGettingCookies = false;
+
+        return {
+          success: true,
+          cookies: cookieString
+        };
+      }
+
+      console.log('未发现任何Cookies，打开登录窗口...');
+
+      // 如果没有有效Cookies，创建认证窗口
       this.authWindow = new BrowserWindow({
         width: 1200,
         height: 800,
@@ -110,74 +157,85 @@ export class ElectronCookieManager {
         this.isGettingCookies = false;
       });
 
-      // 导航到Teambition登录页面
-      await this.authWindow.loadURL('https://www.teambition.com/login');
+      // 直接导航到登录页面
+      await this.authWindow.loadURL('https://account.teambition.com/login');
 
-      console.log('已打开Teambition登录页面，等待用户登录...');
+      console.log('已打开Teambition登录页面，等待用户完成登录...');
 
-      // 监听Cookie变化
-      const cookieCheckInterval = setInterval(async () => {
-        if (!this.authWindow) {
-          clearInterval(cookieCheckInterval);
-          return;
-        }
+      // 返回一个Promise，等待登录完成（无时间限制）
+      return new Promise<{ success: boolean; cookies?: string; error?: string }>((resolve) => {
+        const cookieCheckInterval = setInterval(async () => {
+          if (!this.authWindow) {
+            clearInterval(cookieCheckInterval);
+            resolve({
+              success: false,
+              error: '登录窗口已关闭'
+            });
+            return;
+          }
 
-        const cookies = await session.defaultSession.cookies.get({
-          domain: '.teambition.com'
-        });
+          // 检查当前URL - 如果跳转到主页说明登录成功
+          const currentUrl = this.authWindow.webContents.getURL();
+          const isLoggedIn = currentUrl.includes('teambition.com/') && 
+                           !currentUrl.includes('/login') && 
+                           !currentUrl.includes('/account');
 
-        // 检查是否已获取到有效的认证Cookie
-        const hasAuthCookie = cookies.some(cookie => 
-          cookie.name.includes('session') || 
-          cookie.name.includes('token') ||
-          cookie.name.includes('auth')
-        );
-
-        if (hasAuthCookie && cookies.length > 2) {
-          clearInterval(cookieCheckInterval);
-          
-          // 延迟一下确保所有Cookie都已设置
-          await new Promise(resolve => setTimeout(resolve, 1000));
-          
-          // 获取最终的Cookies
-          const finalCookies = await session.defaultSession.cookies.get({
+          const cookies = await session.defaultSession.cookies.get({
             domain: '.teambition.com'
           });
 
-          const cookieString = finalCookies
-            .map(cookie => `${cookie.name}=${cookie.value}`)
-            .join('; ');
+          // 检查是否已获取到有效的认证Cookie
+          const hasAuthCookie = cookies.some(cookie => {
+            const cookieName = cookie.name.toLowerCase();
+            return cookieName.includes('teambition_sessionid') || 
+                   cookieName.includes('tb_access_token') ||
+                   cookieName.includes('session') || 
+                   cookieName.includes('token') ||
+                   cookieName.includes('auth') ||
+                   cookieName.includes('sid') ||
+                   cookieName.includes('userid') ||
+                   cookieName.includes('_tb_');
+          });
 
-          console.log('用户登录成功，获取到Cookies，数量:', finalCookies.length);
+          console.log('当前URL:', currentUrl);
+          console.log('是否登录:', isLoggedIn);
+          console.log('Cookies数量:', cookies.length);
+          console.log('检测到认证Cookie:', hasAuthCookie);
 
-          // 关闭认证窗口
-          if (this.authWindow) {
-            this.authWindow.close();
+          // 如果URL已经跳转到主页并且有认证Cookie，说明登录成功
+          if (isLoggedIn && hasAuthCookie && cookies.length > 5) {
+            clearInterval(cookieCheckInterval);
+            
+            // 延迟一下确保所有Cookie都已设置
+            await new Promise(resolve => setTimeout(resolve, 2000));
+            
+            // 获取最终的Cookies
+            const finalCookies = await session.defaultSession.cookies.get({
+              domain: '.teambition.com'
+            });
+
+            const cookieString = finalCookies
+              .map(cookie => `${cookie.name}=${cookie.value}`)
+              .join('; ');
+
+            console.log('用户登录成功，获取到Cookies，数量:', finalCookies.length);
+
+            // 关闭认证窗口
+            if (this.authWindow) {
+              this.authWindow.close();
+            }
+
+            this.isGettingCookies = false;
+
+            resolve({
+              success: true,
+              cookies: cookieString
+            });
           }
+        }, 2000); // 每2秒检查一次
 
-          this.isGettingCookies = false;
-
-          return {
-            success: true,
-            cookies: cookieString
-          };
-        }
-      }, 1000);
-
-      // 5分钟后自动超时
-      setTimeout(() => {
-        if (this.isGettingCookies && this.authWindow) {
-          clearInterval(cookieCheckInterval);
-          this.authWindow.close();
-          this.isGettingCookies = false;
-          console.log('Cookie获取超时');
-        }
-      }, 300000);
-
-      return {
-        success: false,
-        error: '请在打开的窗口中完成登录，系统将自动获取Cookies'
-      };
+        // 注意：不再设置超时，用户要求无时间限制等待登录
+      });
 
     } catch (error) {
       this.isGettingCookies = false;

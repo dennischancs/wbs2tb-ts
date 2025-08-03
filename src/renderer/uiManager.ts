@@ -446,7 +446,8 @@ export class UIManager {
       sheetName: (document.getElementById('sheetName') as HTMLSelectElement)?.value || '',
       batchSize: parseInt((document.getElementById('batchSize') as HTMLInputElement)?.value || '20'),
       maxConcurrent: parseInt((document.getElementById('maxConcurrent') as HTMLInputElement)?.value || '5'),
-      useAsync: (document.getElementById('useAsync') as HTMLInputElement)?.checked || true
+      useAsync: (document.getElementById('useAsync') as HTMLInputElement)?.checked || true,
+      excelFilePath: this.selectedFile?.path || ''
     };
   }
 
@@ -454,7 +455,7 @@ export class UIManager {
    * 从配置更新表单
    * @param config 配置数据
    */
-  private updateFormFromConfig(config: any): void {
+  private async updateFormFromConfig(config: any): Promise<void> {
     const projectUrlInput = document.getElementById('projectUrl') as HTMLInputElement;
     const pdtInput = document.getElementById('pdt') as HTMLInputElement;
     const cookiesTextarea = document.getElementById('cookies') as HTMLTextAreaElement;
@@ -466,10 +467,53 @@ export class UIManager {
     if (projectUrlInput) projectUrlInput.value = config.projectUrl || '';
     if (pdtInput) pdtInput.value = config.pdt || '';
     if (cookiesTextarea) cookiesTextarea.value = config.cookies || '';
-    if (sheetNameSelect) sheetNameSelect.value = config.sheetName || '';
     if (batchSizeInput) batchSizeInput.value = config.batchSize?.toString() || '20';
     if (maxConcurrentInput) maxConcurrentInput.value = config.maxConcurrent?.toString() || '5';
     if (useAsyncCheckbox) useAsyncCheckbox.checked = config.useAsync !== false;
+
+    // 处理Excel文件路径
+    if (config.excelFilePath) {
+      try {
+        // 检查文件是否存在
+        const fileExists = await window.electronAPI.file.checkFileExists(config.excelFilePath);
+        if (fileExists) {
+          // 存储文件路径信息，简化处理
+          const fileName = config.excelFilePath.split('\\').pop() || config.excelFilePath.split('/').pop() || 'Unknown';
+          
+          // 创建一个简化的文件信息对象
+          this.selectedFile = {
+            name: fileName,
+            path: config.excelFilePath,
+            size: 0,
+            type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+            arrayBuffer: () => new ArrayBuffer(0),
+            slice: () => new Blob(),
+            stream: () => new ReadableStream(),
+            text: () => Promise.resolve(''),
+            lastModified: Date.now()
+          } as unknown as File;
+
+          // 获取工作表列表
+          const result = await window.electronAPI.file.getExcelSheets(config.excelFilePath);
+          if (result.success && result.sheets) {
+            this.populateSheetSelect(result.sheets);
+            
+            // 设置之前保存的工作表名称
+            if (config.sheetName && result.sheets.includes(config.sheetName)) {
+              sheetNameSelect.value = config.sheetName;
+            } else if (result.sheets.length > 0) {
+              sheetNameSelect.value = result.sheets[0];
+            }
+            
+            this.addLog(`已加载Excel文件: ${this.selectedFile.name}`, 'INFO');
+          }
+        } else {
+          this.addLog(`配置中的Excel文件不存在: ${config.excelFilePath}`, 'WARN');
+        }
+      } catch (error) {
+        this.addLog(`加载Excel文件失败: ${error instanceof Error ? error.message : '未知错误'}`, 'ERROR');
+      }
+    }
   }
 
   /**
@@ -603,10 +647,39 @@ export class UIManager {
    * 自动获取Cookies
    */
   private async autoGetCookies(): Promise<void> {
+    const autoGetCookiesBtn = document.getElementById('autoGetCookies') as HTMLButtonElement;
+    
     try {
+      // 禁用按钮，防止重复点击
+      if (autoGetCookiesBtn) {
+        autoGetCookiesBtn.disabled = true;
+        autoGetCookiesBtn.textContent = '正在检查Cookies...';
+      }
+      
       this.addLog('正在自动获取Cookies...', 'INFO');
+      this.addLog('首先检查现有Cookies...', 'INFO');
+      
+      // 开始检查Cookie状态
+      const statusCheckInterval = setInterval(async () => {
+        const status = await window.electronAPI.cookies.getStatus();
+        if (status.hasAuthWindow) {
+      this.addLog('检测到需要登录，已打开登录窗口', 'INFO');
+      this.addLog('请在登录窗口中完成登录，系统将自动等待并获取Cookies', 'INFO');
+      this.addLog('注意：登录过程没有时间限制，请耐心完成登录', 'INFO');
+          clearInterval(statusCheckInterval);
+        }
+      }, 1000);
       
       const result = await window.electronAPI.cookies.autoGetCookies();
+      
+      // 清除状态检查
+      clearInterval(statusCheckInterval);
+      
+      // 恢复按钮状态
+      if (autoGetCookiesBtn) {
+        autoGetCookiesBtn.disabled = false;
+        autoGetCookiesBtn.textContent = '自动获取Cookies';
+      }
       
       if (result.success && result.cookies) {
         const cookiesTextarea = document.getElementById('cookies') as HTMLTextAreaElement;
@@ -619,9 +692,15 @@ export class UIManager {
         this.showSuccess('Cookies获取成功');
       } else {
         this.addLog(`Cookies获取失败: ${result.error}`, 'ERROR');
-        this.showError('Cookies获取失败', result.error || '请在打开的窗口中完成登录');
+        this.showError('Cookies获取失败', result.error || '获取Cookies失败，请重试');
       }
     } catch (error) {
+      // 恢复按钮状态
+      if (autoGetCookiesBtn) {
+        autoGetCookiesBtn.disabled = false;
+        autoGetCookiesBtn.textContent = '自动获取Cookies';
+      }
+      
       this.addLog(`Cookies获取异常: ${error instanceof Error ? error.message : '未知错误'}`, 'ERROR');
       this.showError('Cookies获取失败', error instanceof Error ? error.message : '未知错误');
     }
@@ -964,8 +1043,13 @@ export class UIManager {
 
       const tasks = dataProcessor.processToTasks();
       if (tasks.length === 0) {
-        this.showError('数据处理失败', '没有有效的任务数据');
-        this.stopSync();
+        // Check if dataProcessor has specific errors about why it's empty
+        const processorErrors = dataProcessor.getErrors();
+        const errorMessage = processorErrors.length > 0 
+          ? `没有有效的任务数据。原因: ${processorErrors.join('; ')}`
+          : '没有有效的任务数据，请检查Excel文件内容（如任务名称列）和格式。';
+        this.showError('数据处理失败', errorMessage);
+        this.stopSync(); // Call stopSync to reset UI and log "同步已停止"
         return;
       }
 

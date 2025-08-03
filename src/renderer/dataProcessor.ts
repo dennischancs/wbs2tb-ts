@@ -3,7 +3,7 @@
  * 负责Excel数据的读取、验证和转换为任务格式
  */
 
-import { TeambitionTask, ExcelRowData } from '../shared/types';
+import { ExcelRowData } from '../shared/types'; // TeambitionTask interface will no longer be directly used for the output
 import { configManager } from './config';
 
 /**
@@ -15,16 +15,26 @@ export class DataProcessor {
   private errors: string[] = [];
 
   /**
-   * 读取Excel文件数据
+   * 读取Excel文件数据 (通过File对象)
    * @param file Excel文件对象
    * @param sheetName 工作表名称
    */
   public async readExcel(file: File, sheetName: string): Promise<void> {
+    // This method now simply calls readExcelFromPath for consistency
+    await this.readExcelFromPath(file.path, sheetName);
+  }
+
+  /**
+   * 读取Excel文件数据 (通过文件路径)
+   * @param filePath Excel文件路径
+   * @param sheetName 工作表名称
+   */
+  public async readExcelFromPath(filePath: string, sheetName: string): Promise<void> {
     this.clearErrors();
     
     try {
       // 通过主进程读取Excel文件
-      const result = await window.electronAPI.file.readExcelFile(file.path, sheetName);
+      const result = await window.electronAPI.file.readExcelFile(filePath, sheetName);
       
       if (!result.success) {
         this.addError(`读取Excel文件失败: ${result.error}`);
@@ -108,8 +118,9 @@ export class DataProcessor {
 
   /**
    * 将Excel数据转换为任务数组
+   * Output format matches the expectations of SyncEngineV2 in main.ts
    */
-  public processToTasks(): TeambitionTask[] {
+  public processToTasks(): any[] {
     this.clearErrors();
     
     if (this.excelData.length < 2) {
@@ -117,7 +128,7 @@ export class DataProcessor {
       return [];
     }
 
-    const tasks: TeambitionTask[] = [];
+    const tasks: any[] = [];
     
     // 跳过表头行，从第二行开始处理
     for (let i = 1; i < this.excelData.length; i++) {
@@ -139,32 +150,32 @@ export class DataProcessor {
 
   /**
    * 将单行数据转换为任务对象
+   * Output format matches the expectations of SyncEngineV2 in main.ts
    * @param row 行数据
    * @param rowIndex 行号（用于错误提示）
    */
-  private convertRowToTask(row: ExcelRowData, rowIndex: number): TeambitionTask | null {
-    // 查找任务名称列
+  private convertRowToTask(row: ExcelRowData, rowIndex: number): any | null {
+    // 查找任务编号列 (Optional)
+    const taskNumber = this.findColumnValue(row, ['任务编号', '编号', 'id', 'number']);
+    
+    // 查找任务名称列 (Mandatory)
     const taskName = this.findColumnValue(row, ['任务名称', '任务', 'name', 'task', 'title']);
     
     if (!taskName || String(taskName).trim() === '') {
-      console.log(`第 ${rowIndex} 行: 跳过空任务`);
+      console.log(`第 ${rowIndex} 行: 跳过空任务 (缺少任务名称)`);
       return null;
     }
 
-    const task: TeambitionTask = {
-      name: String(taskName).trim()
+    const task: any = {
+      task_number: taskNumber ? String(taskNumber).trim() : undefined,
+      task_title: String(taskName).trim(),
+      rowIndex: rowIndex // Added for better error reporting in main process
     };
-
-    // 查找并设置任务描述
-    const description = this.findColumnValue(row, ['任务描述', '描述', 'description', 'desc', '备注']);
-    if (description && String(description).trim() !== '') {
-      task.description = String(description).trim();
-    }
 
     // 查找并设置执行者
     const executor = this.findColumnValue(row, ['执行者', '负责人', 'executor', 'assignee', 'owner']);
     if (executor && String(executor).trim() !== '') {
-      task.executorId = String(executor).trim();
+      task.executor = String(executor).trim();
     }
 
     // 查找并设置开始时间
@@ -172,7 +183,7 @@ export class DataProcessor {
     if (startDate && String(startDate).trim() !== '') {
       const parsedDate = this.parseDate(String(startDate));
       if (parsedDate) {
-        task.startDate = parsedDate;
+        task.start_date = parsedDate;
       } else {
         this.addError(`第 ${rowIndex} 行: 开始时间格式无效 "${startDate}"`);
       }
@@ -183,31 +194,32 @@ export class DataProcessor {
     if (dueDate && String(dueDate).trim() !== '') {
       const parsedDate = this.parseDate(String(dueDate));
       if (parsedDate) {
-        task.dueDate = parsedDate;
+        task.end_date = parsedDate; // main.ts expects 'end_date'
       } else {
         this.addError(`第 ${rowIndex} 行: 截止时间格式无效 "${dueDate}"`);
       }
     }
 
-    // 查找并设置优先级
-    const priority = this.findColumnValue(row, ['优先级', 'priority']);
-    if (priority && String(priority).trim() !== '') {
-      const normalizedPriority = this.normalizePriority(String(priority));
-      if (normalizedPriority) {
-        task.priority = normalizedPriority;
-      } else {
-        this.addError(`第 ${rowIndex} 行: 优先级格式无效 "${priority}"，应为"高"、"中"、"低"或数字`);
-      }
+    // 查找并设置提醒规则
+    const reminderRule = this.findColumnValue(row, ['提醒规则', '提醒', 'reminder']);
+    if (reminderRule && String(reminderRule).trim() !== '') {
+      task.reminder_rule_api = String(reminderRule).trim(); // main.ts expects 'reminder_rule_api'
     }
 
-    // 查找并设置状态
-    const status = this.findColumnValue(row, ['状态', 'status', 'state']);
-    if (status && String(status).trim() !== '') {
-      const normalizedStatus = this.normalizeStatus(String(status));
-      if (normalizedStatus) {
-        task.status = normalizedStatus;
+    // 查找并设置参与人
+    const involvers = this.findColumnValue(row, ['参与人', '参与者', 'involvers', 'members']);
+    if (involvers && String(involvers).trim() !== '') {
+      task.involvers = String(involvers).trim();
+    }
+    
+    // 查找并设置计划工时 (in hours)
+    const planTime = this.findColumnValue(row, ['计划工时', '工时', 'plan time', 'hours']);
+    if (planTime && String(planTime).trim() !== '') {
+      const parsedPlanTime = parseFloat(String(planTime));
+      if (!isNaN(parsedPlanTime) && isFinite(parsedPlanTime)) {
+        task.plan_time = parsedPlanTime; // main.ts expects 'plan_time'
       } else {
-        this.addError(`第 ${rowIndex} 行: 状态格式无效 "${status}"，应为"待办"、"进行中"、"已完成"等`);
+        this.addError(`第 ${rowIndex} 行: 计划工时格式无效 "${planTime}"，应为数字`);
       }
     }
 

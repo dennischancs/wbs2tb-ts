@@ -81,7 +81,13 @@ contextBridge.exposeInMainWorld('electronAPI', {
      * 获取Excel工作表列表
      */
     getExcelSheets: (filePath: string): Promise<{ success: boolean; sheets?: string[]; error?: string }> => 
-      ipcRenderer.invoke('get-excel-sheets', filePath)
+      ipcRenderer.invoke('get-excel-sheets', filePath),
+    
+    /**
+     * 检查文件是否存在
+     */
+    checkFileExists: (filePath: string): Promise<boolean> => 
+      ipcRenderer.invoke('check-file-exists', filePath)
   },
 
   // API代理
@@ -201,6 +207,7 @@ declare global {
         selectExcelFile: () => Promise<{ success: boolean; filePath?: string; error?: string }>;
         readExcelFile: (filePath: string, sheetName: string) => Promise<{ success: boolean; data?: any[]; error?: string }>;
         getExcelSheets: (filePath: string) => Promise<{ success: boolean; sheets?: string[]; error?: string }>;
+        checkFileExists: (filePath: string) => Promise<boolean>;
       };
       api: {
         proxyRequest: (url: string, options: {
