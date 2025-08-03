@@ -81,9 +81,9 @@ jobs:
         with:
           name: ${{ matrix.platform }}-${{ matrix.arch }}-dist
           path: |
-            release/
-            !release/builder-debug.yml
-            !release/builder-effective-config.yaml
+            dist-electron/
+            !dist-electron/builder-debug.yml
+            !dist-electron/builder-effective-config.yaml
 
   release:
     name: Create Release
