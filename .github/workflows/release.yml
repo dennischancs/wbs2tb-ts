@@ -18,6 +18,9 @@ jobs:
           - os: windows-latest
             platform: windows
             arch: x64
+          - os: windows-latest
+            platform: windows
+            arch: arm64
           # macOS
           - os: macos-latest
             platform: macos
@@ -109,7 +112,7 @@ jobs:
           find all-artifacts/ -type f \( -name "WBS2TB-*.AppImage" -o -name "WBS2TB-*.dmg" -o -name "WBS2TB.*.exe" \) -exec cp {} release-files/ \;
           # 排除不需要的文件
           cd release-files
-          rm -f *.blockmap *.yml *.yaml app-update.yml elevate.exe WBS2TB.exe
+          rm -f *.blockmap *.yml *.yaml app-update.yml elevate.exe
           cd ..
           echo "Final release files:"
           ls -la release-files/

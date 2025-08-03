@@ -22,7 +22,7 @@
     "target": [
       {
         "target": "portable",
-        "arch": ["x64"]
+        "arch": ["x64", "arm64"]
       }
     ],
     "icon": "src/assets/icon.ico"
