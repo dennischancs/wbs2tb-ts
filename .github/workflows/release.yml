@@ -116,12 +116,13 @@ jobs:
           echo "tag_name=v$VERSION" >> $GITHUB_OUTPUT
           echo "VERSION=$VERSION" >> $GITHUB_ENV
 
-      - name: Check for existing tag
+      - name: Check for existing tag and handle accordingly
         id: check_tag
         run: |
           if git ls-remote --tags origin refs/tags/${{ steps.tag_version.outputs.tag_name }}; then
-            echo "Tag ${{ steps.tag_version.outputs.tag_name }} already exists. Skipping release creation."
-            echo "should_create_release=false" >> $GITHUB_OUTPUT
+            echo "Tag ${{ steps.tag_version.outputs.tag_name }} already exists. Deleting existing tag and proceeding with release."
+            git push origin :refs/tags/${{ steps.tag_version.outputs.tag_name }} || echo "Failed to delete remote tag, proceeding anyway"
+            echo "should_create_release=true" >> $GITHUB_OUTPUT
           else
             echo "Tag ${{ steps.tag_version.outputs.tag_name }} does not exist. Proceeding with release."
             echo "should_create_release=true" >> $GITHUB_OUTPUT
