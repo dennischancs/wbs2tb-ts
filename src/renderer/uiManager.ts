@@ -33,6 +33,7 @@ export class UIManager {
     this.setupLogFilterEvents(); // Setup log filter events
     this.loadInitialTheme(); // Load and apply initial theme
     this.setupThemeToggle(); // Setup theme toggle button
+    this.setupMenuFileListener(); // Setup listener for file selection from menu
     // Ensure the initial section is correctly displayed
     this.switchSection(this.currentSection);
   }
@@ -506,6 +507,10 @@ export class UIManager {
             }
             
             this.addLog(`已加载Excel文件: ${this.selectedFile.name}`, 'INFO');
+            const selectedFileNameSpan = document.getElementById('selectedFileName') as HTMLSpanElement;
+            if (selectedFileNameSpan) {
+              selectedFileNameSpan.textContent = this.selectedFile.name;
+            }
           }
         } else {
           this.addLog(`配置中的Excel文件不存在: ${config.excelFilePath}`, 'WARN');
@@ -579,6 +584,10 @@ export class UIManager {
 
     this.selectedFile = file;
     this.addLog(`已选择文件: ${file.name}`, 'INFO');
+    const selectedFileNameSpan = document.getElementById('selectedFileName') as HTMLSpanElement;
+    if (selectedFileNameSpan) {
+      selectedFileNameSpan.textContent = file.name;
+    }
 
     try {
       // 获取工作表列表
@@ -874,7 +883,7 @@ export class UIManager {
     try {
       this.addLog('正在加载字段映射设置...', 'INFO');
       
-      // 读取Excel数据以获取表头
+      // 读取Excel数据以获取所有列信息
       const result = await window.electronAPI.file.readExcelFile(this.selectedFile.path, selectedSheet);
       
       if (!result.success || !result.data || result.data.length === 0) {
@@ -882,26 +891,29 @@ export class UIManager {
         return;
       }
 
-      // 获取表头
-      this.excelHeaders = result.data[0].map((header: any) => String(header ?? ''));
+      // 分析Excel数据，获取所有包含文本的列
+      const textColumns = this.analyzeTextColumns(result.data);
       
-      // 默认映射 (按顺序映射)
+      // 获取表头 (从 dataProcessor 中获取，确保与处理数据时使用的表头一致)
+      this.excelHeaders = dataProcessor.getHeaders();
+      
+      // 默认映射：根据实际的表头名称进行映射
       const defaultMapping: { [key: string]: string } = {
-        taskId: this.excelHeaders[0] || '',
-        taskName: this.excelHeaders[1] || '',
-        startDate: this.excelHeaders[2] || '',
-        endDate: this.excelHeaders[3] || '',
-        reminder: this.excelHeaders[4] || '',
-        executor: this.excelHeaders[5] || '',
-        participants: this.excelHeaders[6] || '',
-        plannedHours: this.excelHeaders[7] || '',
+        taskId: this.findHeaderByKeywords(this.excelHeaders, ['任务编号', '编号', 'id', 'number']) || '',
+        taskName: this.findHeaderByKeywords(this.excelHeaders, ['任务名称', '任务', 'name', 'task', 'title']) || '',
+        startDate: this.findHeaderByKeywords(this.excelHeaders, ['开始日期', '开始时间', 'start', 'startdate']) || '',
+        endDate: this.findHeaderByKeywords(this.excelHeaders, ['截止日期', '结束时间', 'due', 'enddate', 'deadline']) || '',
+        reminder: this.findHeaderByKeywords(this.excelHeaders, ['提醒时间', '提醒规则', 'reminder']) || '',
+        executor: this.findHeaderByKeywords(this.excelHeaders, ['执行者', '负责人', 'executor', 'assignee', 'owner']) || '',
+        participants: this.findHeaderByKeywords(this.excelHeaders, ['参与者', '参与人', 'involvers', 'members']) || '',
+        plannedHours: this.findHeaderByKeywords(this.excelHeaders, ['计划工时', '工时', 'plan time', 'hours']) || '',
       };
       
       // 加载当前映射或使用默认映射
       this.currentFieldMapping = { ...defaultMapping }; // TODO: 从配置加载已保存的映射
 
       // 填充映射下拉框
-      this.populateFieldMappingSelects();
+      this.populateFieldMappingSelects(textColumns);
 
       // 显示模态框
       const modal = document.getElementById('fieldMappingModal') as HTMLElement;
@@ -909,7 +921,7 @@ export class UIManager {
         modal.style.display = 'block';
       }
       
-      this.addLog('字段映射设置已加载', 'SUCCESS');
+      this.addLog(`字段映射设置已加载，发现 ${textColumns.length} 个包含文本的列`, 'SUCCESS');
 
     } catch (error) {
       this.addLog(`加载字段映射设置失败: ${error instanceof Error ? error.message : '未知错误'}`, 'ERROR');
@@ -918,10 +930,82 @@ export class UIManager {
   }
 
   /**
-   * 填充字段映射下拉框
+   * 分析Excel数据中的文本列
+   * @param data Excel数据数组
+   * @returns 包含文本的列名数组
    */
-  private populateFieldMappingSelects(): void {
+  private analyzeTextColumns(data: any[]): string[] {
+    if (!data || data.length === 0) {
+      return [];
+    }
+
+    const textColumns: string[] = [];
+    const columnCount = Math.max(...data.map(row => Array.isArray(row) ? row.length : 0));
+
+    // 分析每一列是否包含文本数据
+    for (let colIndex = 0; colIndex < columnCount; colIndex++) {
+      let hasText = false;
+      let columnTextSamples: string[] = [];
+
+      // 检查每一行的该列
+      for (let rowIndex = 0; rowIndex < data.length; rowIndex++) {
+        const row = data[rowIndex];
+        if (Array.isArray(row) && colIndex < row.length) {
+          const cellValue = row[colIndex];
+          
+          // 检查是否为文本内容
+          if (cellValue !== null && cellValue !== undefined && cellValue !== '') {
+            const stringValue = String(cellValue).trim();
+            if (stringValue.length > 0) {
+              hasText = true;
+              // 收集一些文本样本用于列名
+              if (columnTextSamples.length < 3) {
+                columnTextSamples.push(stringValue);
+              }
+            }
+          }
+        }
+      }
+
+      // 如果该列包含文本，则添加到结果中
+      if (hasText) {
+        // 尝试从表头行获取列名，如果没有则使用样本文本
+        const headerRow = data[0];
+        let columnName = '';
+        
+        if (Array.isArray(headerRow) && colIndex < headerRow.length && headerRow[colIndex]) {
+          columnName = String(headerRow[colIndex]).trim();
+        }
+        
+        // 如果表头为空或太短，使用第一个文本样本作为列名
+        if (!columnName || columnName.length === 0) {
+          columnName = columnTextSamples[0] || `列 ${colIndex + 1}`;
+        }
+        
+        // 确保列名唯一
+        let finalColumnName = columnName;
+        let counter = 1;
+        while (textColumns.includes(finalColumnName)) {
+          finalColumnName = `${columnName}_${counter}`;
+          counter++;
+        }
+        
+        textColumns.push(finalColumnName);
+      }
+    }
+
+    return textColumns;
+  }
+
+  /**
+   * 填充字段映射下拉框
+   * @param textColumns 包含文本的列数组
+   */
+  private populateFieldMappingSelects(textColumns: string[] = []): void {
     const fields = ['taskId', 'taskName', 'startDate', 'endDate', 'reminder', 'executor', 'participants', 'plannedHours'];
+    
+    // 如果没有传入textColumns，使用excelHeaders作为备选
+    const columnsToUse = textColumns.length > 0 ? textColumns : this.excelHeaders;
     
     fields.forEach(field => {
       const selectElement = document.getElementById(`map-${field}`) as HTMLSelectElement;
@@ -930,11 +1014,20 @@ export class UIManager {
       // 清空现有选项
       selectElement.innerHTML = '<option value="">--请选择列--</option>';
 
-      // 添加Excel表头作为选项
-      this.excelHeaders.forEach((header, index) => {
+      // 添加所有包含文本的列作为选项
+      columnsToUse.forEach((column, index) => {
         const option = document.createElement('option');
-        option.value = header;
-        option.textContent = `${header} (列 ${index + 1})`;
+        option.value = column;
+        
+        // 如果是表头列，显示为"表头名 (列 X)"，否则显示为"列 X"
+        const isHeader = this.excelHeaders.includes(column);
+        if (isHeader) {
+          const headerIndex = this.excelHeaders.indexOf(column);
+          option.textContent = `${column} (列 ${headerIndex + 1})`;
+        } else {
+          option.textContent = `列 ${index + 1}`;
+        }
+        
         selectElement.appendChild(option);
       });
 
@@ -980,22 +1073,23 @@ export class UIManager {
    * 重置字段映射为默认
    */
   private resetFieldMapping(): void {
+    // 重置为基于表头名称的默认映射
     const defaultMapping: { [key: string]: string } = {
-        taskId: this.excelHeaders[0] || '',
-        taskName: this.excelHeaders[1] || '',
-        startDate: this.excelHeaders[2] || '',
-        endDate: this.excelHeaders[3] || '',
-        reminder: this.excelHeaders[4] || '',
-        executor: this.excelHeaders[5] || '',
-        participants: this.excelHeaders[6] || '',
-        plannedHours: this.excelHeaders[7] || '',
+      taskId: this.findHeaderByKeywords(this.excelHeaders, ['任务编号', '编号', 'id', 'number']) || '',
+      taskName: this.findHeaderByKeywords(this.excelHeaders, ['任务名称', '任务', 'name', 'task', 'title']) || '',
+      startDate: this.findHeaderByKeywords(this.excelHeaders, ['开始日期', '开始时间', 'start', 'startdate']) || '',
+      endDate: this.findHeaderByKeywords(this.excelHeaders, ['截止日期', '结束时间', 'due', 'enddate', 'deadline']) || '',
+      reminder: this.findHeaderByKeywords(this.excelHeaders, ['提醒时间', '提醒规则', 'reminder']) || '',
+      executor: this.findHeaderByKeywords(this.excelHeaders, ['执行者', '负责人', 'executor', 'assignee', 'owner']) || '',
+      participants: this.findHeaderByKeywords(this.excelHeaders, ['参与者', '参与人', 'involvers', 'members']) || '',
+      plannedHours: this.findHeaderByKeywords(this.excelHeaders, ['计划工时', '工时', 'plan time', 'hours']) || '',
     };
 
     this.currentFieldMapping = { ...defaultMapping };
     this.populateFieldMappingSelects(); // 重新填充下拉框以显示默认值
 
-    this.addLog('字段映射已重置为默认', 'INFO');
-    this.showInfo('同步字段映射', '已重置为默认映射。');
+    this.addLog('字段映射已重置为基于表头的默认映射', 'INFO');
+    this.showInfo('同步字段映射', '已重置为基于表头的默认映射。');
   }
 
   /**
@@ -1008,7 +1102,18 @@ export class UIManager {
     }
 
     try {
-      // 验证配置
+      // 获取最新的表单数据
+      const currentFormData = this.getFormData();
+      console.log('Renderer: Form data to be sent:', currentFormData); // LOG: Data from UI
+
+      // 更新主进程中的配置，以确保验证和后续操作都基于最新数据
+      const updateResult = await window.electronAPI.config.updateConfig(currentFormData);
+      if (!updateResult.success) {
+        this.showError('配置更新失败', updateResult.error || '无法更新配置到主进程');
+        return;
+      }
+
+      // 验证配置 (此时验证的是主进程中已更新的配置)
       const validation = await window.electronAPI.config.validateConfig();
       if (!validation.isValid) {
         this.showError('配置验证失败', validation.errors.join('\n'));
@@ -1069,7 +1174,24 @@ export class UIManager {
       if (syncResult.success) {
         this.addLog('同步任务已提交', 'SUCCESS');
       } else {
-        this.addLog(`同步提交失败: ${syncResult.error}`, 'ERROR');
+        const errorMessage = syncResult.error || '未知错误';
+        this.addLog(`同步提交失败: ${errorMessage}`, 'ERROR');
+        
+        // 检查是否是字段映射相关的问题，提供针对性建议
+        if (errorMessage.includes('无法获取任务列表ID') || 
+            errorMessage.includes('无法获取') ||
+            errorMessage.includes('字段') ||
+            errorMessage.includes('映射')) {
+          this.addLog('提示：同步失败可能与字段映射有关。请检查以下几点：', 'WARN');
+          this.addLog('1. 确认Excel表格模板与字段映射设置是否匹配', 'WARN');
+          this.addLog('2. 检查"同步字段映射（高级）"设置中的列映射是否正确', 'WARN');
+          this.addLog('3. 验证Excel表头名称是否与映射设置一致', 'WARN');
+          this.addLog('4. 如果问题持续存在，请尝试重置字段映射为默认设置', 'WARN');
+          
+          this.showError('同步失败', `同步失败: ${errorMessage}\n\n建议检查字段映射设置，可能是表格模板与字段映射的问题。`);
+        } else {
+          this.showError('同步失败', errorMessage);
+        }
       }
 
     } catch (error) {
@@ -1108,6 +1230,49 @@ export class UIManager {
     if (stopSyncBtn) {
       stopSyncBtn.disabled = !this.isSyncing;
     }
+  }
+
+  /**
+   * 设置来自菜单的文件选择监听器
+   */
+  private setupMenuFileListener(): void {
+    window.electronAPI.onExcelFileSelected(async (filePath: string) => {
+      this.addLog(`通过菜单选择文件: ${filePath}`, 'INFO');
+      const fileName = filePath.split('\\').pop() || filePath.split('/').pop() || 'Unknown';
+
+      // Create a mock File object as the rest of the UI expects a File object
+      // The `name` and `path` are the most critical properties used.
+      this.selectedFile = {
+        name: fileName,
+        path: filePath,
+        size: 0, // Placeholder, not used by sheet reading logic
+        type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', // Placeholder
+        arrayBuffer: () => new ArrayBuffer(0), // Placeholder
+        slice: () => new Blob(), // Placeholder
+        stream: () => new ReadableStream(), // Placeholder
+        text: () => Promise.resolve(''), // Placeholder
+        lastModified: Date.now() // Placeholder
+      } as unknown as File;
+
+      const selectedFileNameSpan = document.getElementById('selectedFileName') as HTMLSpanElement;
+      if (selectedFileNameSpan) {
+        selectedFileNameSpan.textContent = this.selectedFile.name;
+      }
+
+      try {
+        // 获取工作表列表
+        const result = await window.electronAPI.file.getExcelSheets(this.selectedFile.path);
+        
+        if (result.success && result.sheets) {
+          this.populateSheetSelect(result.sheets);
+          this.addLog(`获取到 ${result.sheets.length} 个工作表`, 'INFO');
+        } else {
+          this.showError('读取工作表失败', result.error || '未知错误');
+        }
+      } catch (error) {
+        this.showError('文件处理失败', error instanceof Error ? error.message : '未知错误');
+      }
+    });
   }
 
   /**
@@ -1150,6 +1315,25 @@ export class UIManager {
         this.setLogFilter('WARN'); // Assuming 'Skipped' maps to 'WARN' level
       });
     }
+  }
+
+
+
+  /**
+   * 根据关键词查找表头
+   * @param headers 表头数组
+   * @param keywords 关键词数组
+   * @returns 找到的表头，如果没找到返回空字符串
+   */
+  private findHeaderByKeywords(headers: string[], keywords: string[]): string {
+    for (const keyword of keywords) {
+      for (const header of headers) {
+        if (header && String(header).toLowerCase().includes(keyword.toLowerCase())) {
+          return header;
+        }
+      }
+    }
+    return '';
   }
 
   /**

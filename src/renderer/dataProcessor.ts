@@ -6,12 +6,29 @@
 import { ExcelRowData } from '../shared/types'; // TeambitionTask interface will no longer be directly used for the output
 import { configManager } from './config';
 
+// 定义列名映射
+const COLUMN_NAMES = {
+    'task_number': '任务编号',
+    'task_title': '任务名称',
+    'start_date': '开始日期',
+    'end_date': '截止日期',
+    'reminder_rule': '提醒时间', // Assuming '提醒时间' maps to 'reminder_rule_api'
+    'executor': '执行者',
+    'involvers': '参与者',
+    'plan_time': '计划工时'
+} as const;
+
+// 定义期望的表头列表，用于验证
+const EXPECTED_HEADERS = Object.values(COLUMN_NAMES);
+
 /**
  * 数据处理类
  */
 export class DataProcessor {
   private excelData: any[] = [];
   private headers: string[] = [];
+  private headerRowIndex: number = -1; // 存储检测到的表头行索引 (0 或 1)
+  private columnIndices: Map<keyof typeof COLUMN_NAMES, number> = new Map(); // 存储列名映射到的索引
   private errors: string[] = [];
 
   /**
@@ -47,11 +64,21 @@ export class DataProcessor {
         this.addError('Excel文件中没有数据');
         return;
       }
+      
+      // 检测表头行 (第1行或第2行)
+      this.detectHeaderRow();
+      if (this.headerRowIndex === -1) {
+        this.addError('无法在Excel文件的第1行或第2行找到有效的表头。');
+        return;
+      }
 
       // 提取表头，并确保所有表头都是字符串
-      this.headers = (this.excelData[0] as any[]).map(h => String(h || ''));
+      this.headers = (this.excelData[this.headerRowIndex] as any[]).map(h => String(h || ''));
+
+      // 构建列名到索引的映射
+      this.buildColumnIndexMap();
       
-      console.log(`成功读取Excel数据: ${this.excelData.length} 行, ${this.headers.length} 列`);
+      console.log(`成功读取Excel数据: ${this.excelData.length} 行, ${this.headers.length} 列。表头位于第 ${this.headerRowIndex + 1} 行。`);
       
     } catch (error) {
       this.addError(`读取Excel文件失败: ${error instanceof Error ? error.message : '未知错误'}`);
@@ -60,59 +87,93 @@ export class DataProcessor {
   }
 
   /**
+   * 检测表头行是第1行还是第2行
+   */
+  private detectHeaderRow(): void {
+    if (this.excelData.length < 2) {
+      this.headerRowIndex = -1;
+      return;
+    }
+
+    const firstRowHeaders = (this.excelData[0] as any[]).map(h => String(h || ''));
+    const secondRowHeaders = (this.excelData[1] as any[]).map(h => String(h || ''));
+
+    let firstRowMatchCount = 0;
+    let secondRowMatchCount = 0;
+
+    EXPECTED_HEADERS.forEach(expectedHeader => {
+      if (firstRowHeaders.some(h => h.includes(expectedHeader))) {
+        firstRowMatchCount++;
+      }
+      if (secondRowHeaders.some(h => h.includes(expectedHeader))) {
+        secondRowMatchCount++;
+      }
+    });
+
+    // 如果匹配到的表头数量大于0，则认为该行是表头行
+    // 优先选择匹配数量更多的行
+    if (firstRowMatchCount > 0 || secondRowMatchCount > 0) {
+      this.headerRowIndex = (firstRowMatchCount >= secondRowMatchCount) ? 0 : 1;
+    } else {
+      this.headerRowIndex = -1; // 未找到匹配的表头行
+    }
+  }
+
+  /**
+   * 根据检测到的表头构建列名到索引的映射
+   */
+  private buildColumnIndexMap(): void {
+    this.columnIndices.clear();
+    if (this.headerRowIndex === -1 || !this.headers || this.headers.length === 0) {
+      return;
+    }
+
+    (Object.keys(COLUMN_NAMES) as Array<keyof typeof COLUMN_NAMES>).forEach(key => {
+      const chineseHeader = COLUMN_NAMES[key];
+      const index = this.headers.findIndex(h => h.includes(chineseHeader));
+      if (index !== -1) {
+        this.columnIndices.set(key, index);
+      } else {
+        this.addError(`未找到列 "${chineseHeader}" (${key}) 的表头。`);
+      }
+    });
+  }
+
+  /**
    * 验证Excel数据列
    */
   public validateColumns(): boolean {
     this.clearErrors();
     
+    if (this.headerRowIndex === -1) {
+      this.addError('未能检测到表头行，请确保表头位于第1行或第2行。');
+      return false;
+    }
+
     if (this.headers.length === 0) {
       this.addError('Excel文件中没有表头数据');
       return false;
     }
 
-    // 必需的列名映射（支持中英文）
-    const requiredColumns = {
-      // 任务名称相关
-      taskName: ['任务名称', '任务', 'name', 'task', 'title'],
-      // 执行者相关
-      executor: ['执行者', '负责人', 'executor', 'assignee', 'owner'],
-      // 开始时间相关
-      startDate: ['开始时间', '开始日期', 'start', 'startdate'],
-      // 截止时间相关
-      dueDate: ['截止时间', '结束时间', 'due', 'enddate', 'deadline'],
-      // 优先级相关
-      priority: ['优先级', 'priority'],
-      // 状态相关
-      status: ['状态', 'status', 'state']
-    };
+    let allRequiredHeadersFound = true;
+    const missingHeaders: string[] = [];
 
-    const foundColumns: Record<string, string> = {};
-    const missingColumns: string[] = [];
-
-    // 检查每个必需列
-    for (const [key, possibleNames] of Object.entries(requiredColumns)) {
-      const foundColumn = this.headers.find(header => 
-        possibleNames.some(name => 
-          header.toLowerCase().includes(name.toLowerCase())
-        )
-      );
-
-      if (foundColumn) {
-        foundColumns[key] = foundColumn;
-      } else {
-        if (key === 'taskName') {
-          missingColumns.push('任务名称');
-        }
+    // 检查所有必需的表头是否存在
+    (Object.keys(COLUMN_NAMES) as Array<keyof typeof COLUMN_NAMES>).forEach(key => {
+      const chineseHeader = COLUMN_NAMES[key];
+      if (!this.columnIndices.has(key)) {
+        allRequiredHeadersFound = false;
+        missingHeaders.push(chineseHeader);
       }
-    }
+    });
 
-    // 任务名称是必需的
-    if (missingColumns.includes('任务名称')) {
-      this.addError('Excel文件中缺少任务名称列，请确保包含"任务名称"、"任务"、"name"或"task"等列');
+    if (!allRequiredHeadersFound) {
+      this.addError(`Excel文件中缺少必要的表头列: "${missingHeaders.join(', ')}"。请确保表头行包含所有必需的列。`);
       return false;
     }
-
-    console.log('列映射结果:', foundColumns);
+    
+    console.log('列验证通过，表头信息:', this.headers);
+    console.log('列索引映射:', Object.fromEntries(this.columnIndices));
     return true;
   }
 
@@ -123,18 +184,25 @@ export class DataProcessor {
   public processToTasks(): any[] {
     this.clearErrors();
     
-    if (this.excelData.length < 2) {
-      this.addError('Excel文件中没有有效的数据行');
+    if (this.headerRowIndex === -1) {
+      this.addError('未能检测到表头行，无法处理数据。');
+      return [];
+    }
+
+    const dataStartIndex = this.headerRowIndex + 1;
+    if (this.excelData.length <= dataStartIndex) {
+      this.addError(`Excel文件中没有有效的数据行。请确保表头行之后有数据行。`);
       return [];
     }
 
     const tasks: any[] = [];
     
-    // 跳过表头行，从第二行开始处理
-    for (let i = 1; i < this.excelData.length; i++) {
+    // 从表头行的下一行开始处理所有数据行
+    for (let i = dataStartIndex; i < this.excelData.length; i++) {
       const row = this.excelData[i] as ExcelRowData;
       
       try {
+        // 行号需要反映其在Excel中的实际位置，所以是 i + 1
         const task = this.convertRowToTask(row, i + 1);
         if (task) {
           tasks.push(task);
@@ -145,6 +213,9 @@ export class DataProcessor {
     }
 
     console.log(`成功转换 ${tasks.length} 个任务`);
+    if (tasks.length > 0) {
+      console.log('成功转换的任务数据结构:', JSON.stringify(tasks, null, 2));
+    }
     return tasks;
   }
 
@@ -155,72 +226,94 @@ export class DataProcessor {
    * @param rowIndex 行号（用于错误提示）
    */
   private convertRowToTask(row: ExcelRowData, rowIndex: number): any | null {
-    // 查找任务编号列 (Optional)
-    const taskNumber = this.findColumnValue(row, ['任务编号', '编号', 'id', 'number']);
-    
-    // 查找任务名称列 (Mandatory)
-    const taskName = this.findColumnValue(row, ['任务名称', '任务', 'name', 'task', 'title']);
-    
+    const rowArray = Object.values(row);
+    const task: any = {
+      rowIndex: rowIndex // 用于更好的错误报告
+    };
+
+    // 辅助函数：根据列名键获取值
+    const getValue = (key: keyof typeof COLUMN_NAMES): any => {
+      const index = this.columnIndices.get(key);
+      return index !== undefined ? rowArray[index] : undefined;
+    };
+
+    // 任务名称 (必需)
+    const taskName = getValue('task_title');
     if (!taskName || String(taskName).trim() === '') {
       console.log(`第 ${rowIndex} 行: 跳过空任务 (缺少任务名称)`);
       return null;
     }
+    task.task_title = String(taskName).trim();
 
-    const task: any = {
-      task_number: taskNumber ? String(taskNumber).trim() : undefined,
-      task_title: String(taskName).trim(),
-      rowIndex: rowIndex // Added for better error reporting in main process
-    };
+    // 任务编号 (可选)
+    const taskNumber = getValue('task_number');
+    if (taskNumber && String(taskNumber).trim() !== '') {
+      task.task_number = String(taskNumber).trim();
+    }
 
-    // 查找并设置执行者
-    const executor = this.findColumnValue(row, ['执行者', '负责人', 'executor', 'assignee', 'owner']);
+    // 执行者
+    const executor = getValue('executor');
     if (executor && String(executor).trim() !== '') {
       task.executor = String(executor).trim();
     }
 
-    // 查找并设置开始时间
-    const startDate = this.findColumnValue(row, ['开始时间', '开始日期', 'start', 'startdate']);
+    // 开始时间
+    const startDate = getValue('start_date');
     if (startDate && String(startDate).trim() !== '') {
       const parsedDate = this.parseDate(String(startDate));
       if (parsedDate) {
         task.start_date = parsedDate;
       } else {
-        this.addError(`第 ${rowIndex} 行: 开始时间格式无效 "${startDate}"`);
+        this.addError(`第 ${rowIndex} 行: 开始时间格式无效 "${startDate}"，请使用YYYY-MM-DD格式`);
       }
     }
 
-    // 查找并设置截止时间
-    const dueDate = this.findColumnValue(row, ['截止时间', '结束时间', 'due', 'enddate', 'deadline']);
-    if (dueDate && String(dueDate).trim() !== '') {
-      const parsedDate = this.parseDate(String(dueDate));
+    // 截止时间
+    const endDate = getValue('end_date');
+    if (endDate && String(endDate).trim() !== '') {
+      const parsedDate = this.parseDate(String(endDate));
       if (parsedDate) {
         task.end_date = parsedDate; // main.ts expects 'end_date'
       } else {
-        this.addError(`第 ${rowIndex} 行: 截止时间格式无效 "${dueDate}"`);
+        this.addError(`第 ${rowIndex} 行: 截止时间格式无效 "${endDate}"，请使用YYYY-MM-DD格式`);
       }
     }
-
-    // 查找并设置提醒规则
-    const reminderRule = this.findColumnValue(row, ['提醒规则', '提醒', 'reminder']);
+    
+    // 提醒规则
+    const reminderRule = getValue('reminder_rule');
     if (reminderRule && String(reminderRule).trim() !== '') {
       task.reminder_rule_api = String(reminderRule).trim(); // main.ts expects 'reminder_rule_api'
     }
 
-    // 查找并设置参与人
-    const involvers = this.findColumnValue(row, ['参与人', '参与者', 'involvers', 'members']);
+    // 参与人
+    const involvers = getValue('involvers');
     if (involvers && String(involvers).trim() !== '') {
       task.involvers = String(involvers).trim();
     }
     
-    // 查找并设置计划工时 (in hours)
-    const planTime = this.findColumnValue(row, ['计划工时', '工时', 'plan time', 'hours']);
+    // 计划工时
+    const planTime = getValue('plan_time');
     if (planTime && String(planTime).trim() !== '') {
       const parsedPlanTime = parseFloat(String(planTime));
       if (!isNaN(parsedPlanTime) && isFinite(parsedPlanTime)) {
         task.plan_time = parsedPlanTime; // main.ts expects 'plan_time'
       } else {
-        this.addError(`第 ${rowIndex} 行: 计划工时格式无效 "${planTime}"，应为数字`);
+        this.addError(`第 ${rowIndex} 行: 计划工时格式无效 "${planTime}"，应为数字（小时）`);
       }
+    }
+
+    // 尝试从最后一列获取描述，如果它不是已定义的列之一
+    // 这是一个备选方案，因为描述没有在COLUMN_NAMES中定义
+    const lastColIndex = rowArray.length - 1;
+    let isLastColumnAMappedColumn = false;
+    for (const index of this.columnIndices.values()) {
+        if (index === lastColIndex) {
+            isLastColumnAMappedColumn = true;
+            break;
+        }
+    }
+    if (!isLastColumnAMappedColumn && rowArray[lastColIndex] && String(rowArray[lastColIndex]).trim() !== '') {
+        task.description = String(rowArray[lastColIndex]).trim();
     }
 
     return task;
@@ -331,46 +424,10 @@ export class DataProcessor {
   }
 
   /**
-   * 获取数据预览
-   * @param previewRows 预览行数
-   */
-  public getDataPreview(previewRows: number = 10): any[] {
-    if (this.excelData.length === 0) {
-      return [];
-    }
-
-    const preview = [];
-    const maxRows = Math.min(previewRows + 1, this.excelData.length); // +1 包含表头
-
-    for (let i = 0; i < maxRows; i++) {
-      preview.push(this.excelData[i]);
-    }
-
-    return preview;
-  }
-
-  /**
    * 获取表头信息
    */
   public getHeaders(): string[] {
     return [...this.headers];
-  }
-
-  /**
-   * 获取数据统计信息
-   */
-  public getDataStats(): {
-    totalRows: number;
-    totalColumns: number;
-    hasHeaders: boolean;
-    dataRows: number;
-  } {
-    return {
-      totalRows: this.excelData.length,
-      totalColumns: this.headers.length,
-      hasHeaders: this.headers.length > 0,
-      dataRows: this.excelData.length > 0 ? this.excelData.length - 1 : 0
-    };
   }
 
   /**

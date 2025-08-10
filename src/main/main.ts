@@ -48,6 +48,7 @@ class MainWindow {
       minHeight: 600,
       title: 'WBS2TB - Excel到Teambition同步工具',
       icon: iconPath, // Electron automatically selects the correct extension (.ico, .icns, etc.)
+      autoHideMenuBar: true, // Hide menu bar by default, show with Alt key
       webPreferences: {
         nodeIntegration: false,
         contextIsolation: true,
@@ -238,6 +239,7 @@ ipcMain.handle('get-config', () => {
 });
 
 ipcMain.handle('update-config', (_, config: Partial<any>) => {
+  console.log('Main: Received config for update:', config); // LOG: Data received in main
   try {
     configManager.updateConfig(config);
     addLog('配置已更新', 'SUCCESS');
@@ -249,6 +251,8 @@ ipcMain.handle('update-config', (_, config: Partial<any>) => {
 });
 
 ipcMain.handle('validate-config', () => {
+  const currentConfig = configManager.getConfig(); // LOG: Get current config before validation
+  console.log('Main: Config state at validation:', currentConfig);
   return configManager.validateConfig();
 });
 

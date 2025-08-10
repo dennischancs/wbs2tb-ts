@@ -184,6 +184,11 @@ contextBridge.exposeInMainWorld('electronAPI', {
     removeLogListener: () => {
       ipcRenderer.removeAllListeners('log-update');
     }
+  },
+
+  // 文件操作事件 (from main process menu)
+  onExcelFileSelected: (callback: (filePath: string) => void) => {
+    ipcRenderer.on('excel-file-selected', (_, filePath) => callback(filePath));
   }
 });
 
@@ -237,6 +242,7 @@ declare global {
         onLogUpdate: (callback: (logs: any[]) => void) => void;
         removeLogListener: () => void;
       };
+      onExcelFileSelected: (callback: (filePath: string) => void) => void;
     };
   }
 }

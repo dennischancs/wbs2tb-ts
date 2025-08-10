@@ -18,28 +18,42 @@ export class ApiClient {
    * 初始化API客户端
    */
   public async initialize(): Promise<{ success: boolean; error?: string }> {
+    console.log('=== API客户端初始化开始 ===');
     try {
       const config = configManager.getConfig();
+      console.log('配置信息:', JSON.stringify(config, null, 2));
       
       if (!config.projectUrl) {
+        console.error('初始化失败: 项目URL未配置');
         return { success: false, error: '项目URL未配置' };
       }
 
+      console.log(`项目URL: ${config.projectUrl}`);
+
       // 提取项目ID
       this.projectId = extractProjectId(config.projectUrl);
+      console.log(`提取的项目ID: ${this.projectId}`);
+      
       if (!this.projectId) {
+        console.error('初始化失败: 无法从项目URL中提取项目ID');
         return { success: false, error: '无法从项目URL中提取项目ID' };
       }
 
       // 验证项目访问权限
+      console.log('正在验证项目访问权限...');
       const projectResult = await this.getProject();
+      console.log(`项目访问验证结果 - 成功: ${projectResult.success}, 错误: ${projectResult.error || '无'}`);
+      
       if (!projectResult.success) {
+        console.error('初始化失败: 无法访问项目');
         return { success: false, error: `无法访问项目: ${projectResult.error}` };
       }
 
       console.log('API客户端初始化成功，项目ID:', this.projectId);
+      console.log('=== API客户端初始化完成 ===');
       return { success: true };
     } catch (error) {
+      console.error('API客户端初始化异常:', error);
       return { 
         success: false, 
         error: `API客户端初始化失败: ${error instanceof Error ? error.message : '未知错误'}` 
@@ -63,12 +77,32 @@ export class ApiClient {
    * 获取项目的任务列表
    */
   public async getTasklists(): Promise<ApiResponse<TeambitionTasklist[]>> {
+    console.log('=== getTasklists() 开始执行 ===');
+    console.log(`当前项目ID: ${this.projectId}`);
+    
     if (!this.projectId) {
+      console.error('getTasklists() 错误: 项目ID未设置');
       return { success: false, error: '项目ID未设置' };
     }
 
     const url = `${this.baseUrl}/api/projects/${this.projectId}/tasklists`;
-    return this.makeRequest<TeambitionTasklist[]>(url);
+    console.log(`请求URL: ${url}`);
+    
+    console.log('开始发送API请求获取任务列表...');
+    const result = await this.makeRequest<TeambitionTasklist[]>(url);
+    console.log(`API请求完成 - 成功: ${result.success}, 错误: ${result.error || '无'}`);
+    
+    if (result.success && result.data) {
+      console.log(`成功获取到 ${result.data.length} 个任务列表:`);
+      result.data.forEach((tasklist, index) => {
+        console.log(`  任务列表 ${index + 1}: ID=${tasklist.id}, 名称="${tasklist.name}"`);
+      });
+    } else {
+      console.error(`获取任务列表失败: ${result.error}`);
+    }
+    
+    console.log('=== getTasklists() 执行完成 ===');
+    return result;
   }
 
   /**
@@ -194,11 +228,19 @@ export class ApiClient {
       body?: string;
     } = {}
   ): Promise<ApiResponse<T>> {
+    console.log(`=== makeRequest() 开始执行 ===`);
+    console.log(`请求URL: ${url}`);
+    console.log(`请求方法: ${options.method || 'GET'}`);
+    
     const config = configManager.getConfig();
     
     if (!config.cookies) {
+      console.error('makeRequest() 错误: Cookies未配置');
       return { success: false, error: 'Cookies未配置，请先获取认证信息' };
     }
+
+    console.log(`Cookies长度: ${config.cookies.length} 字符`);
+    console.log(`Cookies前50字符: ${config.cookies.substring(0, 50)}...`);
 
     const requestHeaders: Record<string, string> = {
       'Content-Type': 'application/json',
@@ -214,19 +256,34 @@ export class ApiClient {
 
     if (options.body && ['POST', 'PUT', 'PATCH'].includes(options.method?.toUpperCase() || '')) {
       requestOptions.body = options.body;
+      console.log(`请求体: ${options.body}`);
     }
+
+    console.log('发送HTTP请求...');
+    console.log('请求头:', JSON.stringify(requestHeaders, null, 2));
 
     try {
       // 使用重试机制增强请求稳定性
       const response = await retry(async () => {
-        return await window.electronAPI.api.proxyRequest(url, requestOptions);
+        console.log('通过proxyRequest发送请求...');
+        const result = await window.electronAPI.api.proxyRequest(url, requestOptions);
+        console.log(`proxyRequest响应 - 成功: ${result.success}, 错误: ${result.error || '无'}`);
+        if (result.data) {
+          console.log('响应数据:', JSON.stringify(result.data, null, 2));
+        }
+        if (result.code) {
+          console.log(`响应状态码: ${result.code}`);
+        }
+        return result;
       }, 3, 1000);
 
       if (!response.success) {
         console.error('API请求失败:', response.error);
+        console.error('完整响应:', JSON.stringify(response, null, 2));
         return { success: false, error: response.error || 'API请求失败' };
       }
 
+      console.log('API请求成功完成');
       return {
         success: true,
         data: response.data as T,
@@ -234,10 +291,13 @@ export class ApiClient {
       };
     } catch (error) {
       console.error('API请求异常:', error);
+      console.error('异常堆栈:', error instanceof Error ? error.stack : '无堆栈信息');
       return { 
         success: false, 
         error: error instanceof Error ? error.message : 'API请求异常' 
       };
+    } finally {
+      console.log('=== makeRequest() 执行完成 ===');
     }
   }
 

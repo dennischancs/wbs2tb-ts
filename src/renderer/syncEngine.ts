@@ -55,11 +55,16 @@ export class SyncEngine {
 
       // 1. 初始化API客户端
       this.reportProgress(5, '正在初始化API客户端...');
-      log('正在初始化API客户端...');
+      log('=== 开始初始化API客户端 ===');
       const initResult = await this.apiClient.initialize();
+      log(`API客户端初始化结果 - 成功: ${initResult.success}, 错误: ${initResult.error || '无'}`);
+      
       if (!initResult.success) {
+        logError('API客户端初始化失败', initResult.error);
         throw new Error(`API客户端初始化失败: ${initResult.error}`);
       }
+      
+      log('=== API客户端初始化成功 ===');
       
       // 2. 从Excel读取任务数据
       this.reportProgress(10, '正在读取Excel文件...');
@@ -84,18 +89,48 @@ export class SyncEngine {
       this.totalTasks = excelData.length;
       log(`从Excel读取到 ${this.totalTasks} 个任务。`);
 
-      // 3. 获取Teambition任务列表
-      this.reportProgress(20, '正在获取Teambition现有任务...');
+      // 3. 获取Teambition任务列表信息
+      this.reportProgress(20, '正在获取Teambition任务列表信息...');
+      log('=== 开始获取任务列表信息 ===');
+      log(`当前项目ID: ${this.apiClient.getProjectId()}`);
+      
+      const tasklistsResponse = await this.apiClient.getTasklists();
+      log(`任务列表API响应 - 成功: ${tasklistsResponse.success}, 错误: ${tasklistsResponse.error || '无'}`);
+      
+      if (!tasklistsResponse.success || !tasklistsResponse.data) {
+        logError('获取任务列表失败', tasklistsResponse.error);
+        throw new Error(`获取任务列表失败: ${tasklistsResponse.error}`);
+      }
+      
+      const tasklists = tasklistsResponse.data;
+      log(`成功获取到 ${tasklists.length} 个任务列表`);
+      
+      if (tasklists.length === 0) {
+        logError('项目中没有找到任务列表', '请先在Teambition中创建任务列表');
+        throw new Error('项目中没有找到任务列表，请先在Teambition中创建任务列表');
+      }
+      
+      // 详细记录每个任务列表的信息
+      tasklists.forEach((tasklist, index) => {
+        log(`任务列表 ${index + 1}: ID=${tasklist.id}, 名称=${tasklist.name}`);
+      });
+      
+      // 使用第一个任务列表（或者可以根据需要选择特定的任务列表）
+      const tasklistId = tasklists[0].id;
+      log(`=== 选择使用任务列表: ${tasklists[0].name} (ID: ${tasklistId}) ===`);
+      
+      // 5. 获取Teambition现有任务
+      this.reportProgress(25, '正在获取Teambition现有任务...');
       log('正在获取Teambition现有任务...');
-      const existingTasksResponse = await this.apiClient.getTasks({}); // Pass empty options for now
+      const existingTasksResponse = await this.apiClient.getTasks({ tasklistId });
       if (!existingTasksResponse.success || !existingTasksResponse.data) {
         throw new Error(`获取Teambition任务失败: ${existingTasksResponse.error}`);
       }
       const existingTasks = existingTasksResponse.data;
       log(`Teambition项目中现有 ${existingTasks.length} 个任务。`);
 
-      // 4. 数据比对和同步
-      this.reportProgress(25, '开始比对和同步任务...');
+      // 6. 数据比对和同步
+      this.reportProgress(30, '开始比对和同步任务...');
       log('开始比对和同步任务...');
       await this.syncTasks(excelData, existingTasks);
 
